@@ -63,7 +63,6 @@ function render(data) {
   const { current: cur, hourly, daily } = data;
   const now = info(cur.weather_code, cur.is_day);
 
-  document.body.classList.toggle("night", !cur.is_day);
   $("temp").textContent = `${round(cur.temperature_2m)}°`;
   $("condition").textContent = now.label;
   $("hilo").textContent = `H:${round(daily.temperature_2m_max[0])}°  L:${round(daily.temperature_2m_min[0])}°`;
@@ -142,5 +141,21 @@ $("search").addEventListener("submit", (e) => {
   e.preventDefault();
   $("results").querySelector("li")?.click();
 });
+
+// Greeting by time of day
+const h = new Date().getHours();
+$("greeting").textContent = `Good ${h < 12 ? "morning" : h < 18 ? "afternoon" : "evening"}, Daniella`;
+
+// Theme: light, dark, or follow the system
+function setTheme(theme) {
+  if (theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-checked", b.dataset.theme === theme));
+  try { localStorage.setItem("theme", theme); } catch (e) {}
+}
+$("theme").addEventListener("click", (e) => {
+  if (e.target.dataset.theme) setTheme(e.target.dataset.theme);
+});
+setTheme(document.documentElement.dataset.theme || "system");
 
 loadWeather(DEFAULT);
