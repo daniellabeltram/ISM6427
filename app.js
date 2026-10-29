@@ -1,161 +1,106 @@
-const DEFAULT = { name: "Boca Raton", lat: 26.3683, lon: -80.1289 };
+const API = "https://openlibrary.org";
+const COVERS = "https://covers.openlibrary.org";
 
-// WMO weather codes -> [label, day icon, night icon]
-const CODES = {
-  0: ["Clear", "☀️", "🌙"],
-  1: ["Mostly Clear", "🌤️", "🌙"],
-  2: ["Partly Cloudy", "⛅", "☁️"],
-  3: ["Cloudy", "☁️", "☁️"],
-  45: ["Fog", "🌫️", "🌫️"],
-  48: ["Fog", "🌫️", "🌫️"],
-  51: ["Light Drizzle", "🌦️", "🌧️"],
-  53: ["Drizzle", "🌦️", "🌧️"],
-  55: ["Heavy Drizzle", "🌧️", "🌧️"],
-  61: ["Light Rain", "🌦️", "🌧️"],
-  63: ["Rain", "🌧️", "🌧️"],
-  65: ["Heavy Rain", "🌧️", "🌧️"],
-  71: ["Light Snow", "🌨️", "🌨️"],
-  73: ["Snow", "🌨️", "🌨️"],
-  75: ["Heavy Snow", "❄️", "❄️"],
-  80: ["Showers", "🌦️", "🌧️"],
-  81: ["Showers", "🌧️", "🌧️"],
-  82: ["Heavy Showers", "🌧️", "🌧️"],
-  95: ["Thunderstorm", "⛈️", "⛈️"],
-  96: ["Thunderstorm", "⛈️", "⛈️"],
-  99: ["Thunderstorm", "⛈️", "⛈️"],
-};
+// Bestselling US authors and the most-read genres in the US (curated);
+// photos, works and books come live from Open Library.
+const AUTHORS = [
+  "Stephen King", "Colleen Hoover", "James Patterson", "John Grisham", "Nora Roberts",
+  "Danielle Steel", "Rebecca Yarros", "Emily Henry", "Suzanne Collins", "Dan Brown",
+];
+const GENRES = [
+  { name: "Romance", subject: "romance" },
+  { name: "Fantasy", subject: "fantasy" },
+  { name: "Thriller", subject: "thrillers" },
+];
 
 const $ = (id) => document.getElementById(id);
-const info = (code, isDay = 1) => {
-  const c = CODES[code] || ["—", "🌡️", "🌡️"];
-  return { label: c[0], icon: isDay ? c[1] : c[2] };
-};
-const round = (n) => Math.round(n);
 
-async function loadWeather({ name, lat, lon }) {
-  $("place").textContent = name;
-  $("condition").textContent = "Loading…";
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  const url = new URL("https://api.open-meteo.com/v1/forecast");
-  url.search = new URLSearchParams({
-    latitude: lat,
-    longitude: lon,
-    current: "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day",
-    hourly: "temperature_2m,weather_code,is_day",
-    daily: "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
-    temperature_unit: "fahrenheit",
-    wind_speed_unit: "mph",
-    timezone: "auto",
-    forecast_days: 7,
-  });
+async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(res.status);
+  return res.json();
+}
 
+function cover(id, title) {
+  return id
+    ? `<img src="${COVERS}/b/id/${id}-M.jpg" alt="" loading="lazy">`
+    : `<span class="placeholder">${esc(title)}</span>`;
+}
+
+async function loadBooks() {
+  const el = $("books");
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(res.status);
-    render(await res.json());
-  } catch (err) {
-    $("condition").textContent = "Couldn't load weather";
-    console.error(err);
+    const { works } = await getJSON(`${API}/trending/weekly.json?limit=5`);
+    el.innerHTML = works.slice(0, 5).map((w, i) => `
+      <li class="book">
+        <a href="${API}${w.key}" target="_blank" rel="noopener">
+          <div class="cover">${cover(w.cover_i, w.title)}</div>
+          <span class="rank">${i + 1}</span>
+          <h3>${esc(w.title)}</h3>
+          <p>${esc((w.author_name || []).join(", "))}</p>
+        </a>
+      </li>`).join("");
+  } catch {
+    el.innerHTML = `<p class="error">Couldn't load trending books.</p>`;
   }
 }
 
-function render(data) {
-  const { current: cur, hourly, daily } = data;
-  const now = info(cur.weather_code, cur.is_day);
+async function loadGenres() {
+  const el = $("genres");
+  el.innerHTML = GENRES.map((g, i) => `
+    <article class="genre">
+      <span class="rank">${i + 1}</span>
+      <h3>${g.name}</h3>
+      <p class="count" id="count-${g.subject}">&nbsp;</p>
+      <div class="mini" id="genre-${g.subject}"></div>
+    </article>`).join("");
 
-  $("temp").textContent = `${round(cur.temperature_2m)}°`;
-  $("condition").textContent = now.label;
-  $("hilo").textContent = `H:${round(daily.temperature_2m_max[0])}°  L:${round(daily.temperature_2m_min[0])}°`;
-  $("feels").textContent = `${round(cur.apparent_temperature)}°`;
-  $("humidity").textContent = `${cur.relative_humidity_2m}%`;
-  $("wind").textContent = `${round(cur.wind_speed_10m)} mph`;
-  $("uv").textContent = round(daily.uv_index_max[0]);
-
-  // Next 24 hours starting from the current hour
-  const start = hourly.time.findIndex((t) => t >= cur.time.slice(0, 13));
-  $("hourly").innerHTML = hourly.time
-    .slice(start, start + 24)
-    .map((t, i) => {
-      const j = start + i;
-      const hour = new Date(t).getHours();
-      const label = i === 0 ? "Now" : `${hour % 12 || 12}${hour < 12 ? "AM" : "PM"}`;
-      return `<div class="hour">
-        <span>${label}</span>
-        <span class="icon">${info(hourly.weather_code[j], hourly.is_day[j]).icon}</span>
-        <span>${round(hourly.temperature_2m[j])}°</span>
-      </div>`;
-    })
-    .join("");
-
-  const min = Math.min(...daily.temperature_2m_min);
-  const max = Math.max(...daily.temperature_2m_max);
-  const span = max - min || 1;
-  $("daily").innerHTML = daily.time
-    .map((t, i) => {
-      const lo = daily.temperature_2m_min[i];
-      const hi = daily.temperature_2m_max[i];
-      const day = i === 0 ? "Today" : new Date(t + "T00:00").toLocaleDateString("en-US", { weekday: "short" });
-      return `<div class="day">
-        <span>${day}</span>
-        <span class="icon">${info(daily.weather_code[i]).icon}</span>
-        <div class="range">
-          <span class="lo">${round(lo)}°</span>
-          <div class="bar"><span style="left:${((lo - min) / span) * 100}%;right:${((max - hi) / span) * 100}%"></span></div>
-          <span class="hi">${round(hi)}°</span>
-        </div>
-      </div>`;
-    })
-    .join("");
+  await Promise.all(GENRES.map(async (g) => {
+    try {
+      const data = await getJSON(`${API}/subjects/${g.subject}.json?limit=3`);
+      $(`count-${g.subject}`).textContent = `${data.work_count.toLocaleString()} works`;
+      $(`genre-${g.subject}`).innerHTML = data.works.map((w) => `
+        <a href="${API}${w.key}" target="_blank" rel="noopener" title="${esc(w.title)}">
+          ${cover(w.cover_id, w.title)}
+        </a>`).join("");
+    } catch {
+      $(`count-${g.subject}`).textContent = "";
+    }
+  }));
 }
 
-// City search via Open-Meteo geocoding
-let timer;
-$("query").addEventListener("input", (e) => {
-  clearTimeout(timer);
-  const q = e.target.value.trim();
-  if (q.length < 2) return ($("results").hidden = true);
-  timer = setTimeout(() => search(q), 300);
-});
+async function loadAuthors() {
+  const el = $("authors");
+  el.innerHTML = AUTHORS.map((name, i) => `
+    <li class="author" id="author-${i}">
+      <span class="rank">${String(i + 1).padStart(2, "0")}</span>
+      <div class="photo"><span>${esc(name.split(" ").map((p) => p[0]).join(""))}</span></div>
+      <div>
+        <h3>${esc(name)}</h3>
+        <p class="meta">&nbsp;</p>
+      </div>
+    </li>`).join("");
 
-async function search(q) {
-  const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=5`);
-  const { results = [] } = await res.json();
-  const list = $("results");
-  list.innerHTML = "";
-  results.forEach((r) => {
-    const li = document.createElement("li");
-    const sub = document.createElement("small");
-    sub.textContent = [r.admin1, r.country].filter(Boolean).join(", ");
-    li.append(`${r.name} `, sub);
-    li.onclick = () => {
-      list.hidden = true;
-      $("query").value = "";
-      loadWeather({ name: r.name, lat: r.latitude, lon: r.longitude });
-    };
-    list.appendChild(li);
-  });
-  list.hidden = results.length === 0;
+  await Promise.all(AUTHORS.map(async (name, i) => {
+    try {
+      const { docs } = await getJSON(`${API}/search/authors.json?q=${encodeURIComponent(name)}&limit=1`);
+      const a = docs[0];
+      if (!a) return;
+      const id = a.key.replace("/authors/", "");
+      const li = $(`author-${i}`);
+      const img = new Image();
+      img.alt = "";
+      img.onload = () => { if (img.naturalWidth > 1) li.querySelector(".photo").replaceChildren(img); };
+      img.src = `${COVERS}/a/olid/${id}-M.jpg?default=false`;
+      li.querySelector(".meta").textContent =
+        [a.top_work, a.work_count && `${a.work_count} works`].filter(Boolean).join(" · ");
+    } catch {}
+  }));
 }
 
-$("search").addEventListener("submit", (e) => {
-  e.preventDefault();
-  $("results").querySelector("li")?.click();
-});
-
-// Greeting by time of day
-const h = new Date().getHours();
-$("greeting").textContent = `Good ${h < 12 ? "morning" : h < 18 ? "afternoon" : "evening"}, Daniella`;
-
-// Theme: light, dark, or follow the system
-function setTheme(theme) {
-  if (theme === "system") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
-  document.querySelectorAll("#theme button").forEach((b) => b.setAttribute("aria-checked", b.dataset.theme === theme));
-  try { localStorage.setItem("theme", theme); } catch (e) {}
-}
-$("theme").addEventListener("click", (e) => {
-  if (e.target.dataset.theme) setTheme(e.target.dataset.theme);
-});
-setTheme(document.documentElement.dataset.theme || "system");
-
-loadWeather(DEFAULT);
+loadBooks();
+loadGenres();
+loadAuthors();
